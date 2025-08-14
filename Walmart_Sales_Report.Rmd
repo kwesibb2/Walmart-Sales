@@ -1,0 +1,749 @@
+---
+title: "Walmart Sales Report"
+date: "2024-04-15"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Objective
+Evaluating predictive models for a 28-day forecast of Walmart Sales within the states of California, Texas, Wisconsin through achieving the lowest possible Root Mean Square Error (RMSE). 
+
+# Introduction
+Our report presents a comprehensive analysis of Walmart retail stores’ sales data from California, Texas, and Wisconsin. The purpose of our models is to understand sales trends and patterns by examining daily units sold and average prices across these states. Additionally, we build simple linear models to forecast sales in each state, evaluating their performance to refine our predictions. Our metric for comparing the accuracy of models is RMSE. Further analysis techniques led us to use forecasting methods such as LASSO, AR, MA, and ARMA. These methods led to increased performance in our prediction and a decrease in RMSE across all states.
+
+The analysis for this study has been performed using R Studio. The models and Exploratory Data Analysis have also been executed using development tools like R Studio
+Several packages have been used to perform the initial and final outcome EDA for
+the analysis. For the initial EDA, we used tidyr, readr, dplyr, tidyverse. Packages like
+numpy, pandas, tidyverse, etc. have been used for data wrangling and manipulation.
+For the models that have been created, several packages like ‘plotly’, ‘glmnet’ were implemented. 
+
+From this analysis, we can guide strategic decisions for inventory management and promotional activities for Walmart.
+
+
+# References
+Previous studies have been performed to predict sales for Walmart based on the availability of relevant historical data. Rashmi Jeswani from Rochester's Institute of Technology College of Computing and Information Sciences analyzed the Walmart data set to predict sales (“Predicting Walmart Sales, Exploratory Data Analysis, and Walmart Sales Dashboard” 2017). This paper explored the performance of forecasts for future weekly sales for Walmart stores based on many different models including linear, lasso regression, random forest, and gradient boosting. They mentioned further analysis can be done using ARMA and ARIMA models which we have conducted in this study.
+
+Michael Crown another data scientist in his paper "Weekly Sales Forecasts Using Non-Seasonal ARIMA Models"(2016) Autoregressive Integrated Moving Average (ARIMA) modeling was used in this paper to create one year of weekly forecasts using 2.75 years of sales data, with features for the store, department, date, weekly sales, and if the week contains a major holiday. In this paper, the metric for comparing the accuracy of models is the NRMSE. It was found that "NRMSE for individual department forecasts was 0.155. In other words, 75 percent of the department-wise forecasts had an average error that was less than 15.5% of the mean sales during that time". We used a similar data set but One of the limitations of this data set that Crown mentioned was the limited data of 143 weeks (2.75 Years). Our data set improves on this with nearly 5 years of data.
+
+Studies on price rigidity during holidays helped us explain why we see what we see in our price graph throughout the years. 'Holiday Price Rigidity and Cost of Price Adjustment' (DANIEL LEVY et. al.) examines the prediction that Due to higher store traffic, tasks become more urgent during holidays, and thus the holiday-period opportunity cost of price adjustment may increase dramatically for retail stores' which leads to greater price rigidity. This paper used weekly retail scanner price data from a major Midwestern supermarket chain. They concluded that the menu cost theory offers the best explanation for the holiday period price rigidity. Menu cost theory is when firms or in this case Walmart hesitate to adjust prices frequently due to the expenses incurred in changing them, such as reprinting menus or updating catalogs. 
+
+
+# Graphs
+```{r, echo=FALSE, include=FALSE}
+
+library(tidyr)
+library(plotly)
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(glmnet)
+
+set.seed(1)
+
+```
+
+```{r, echo= FALSE, include=FALSE}
+calendar = read.csv("data/calendar.csv", header = T, na.strings = "?", stringsAsFactors = T)
+sales_test_validation <- read.csv("data/sales_test_validation.csv", header = T, na.strings = "?", stringsAsFactors = T)
+sales_train_validation <- read.csv("data/sales_train_validation.csv",header = T, na.strings = "?", stringsAsFactors = T)
+sell_prices <- read.csv("data/sell_prices.csv")
+```
+
+
+```{r, echo= FALSE, include=FALSE}
+
+combined = sales_train_validation %>%
+  right_join(sales_test_validation, 
+             by = c("item_id", "dept_id", "cat_id", "store_id", "state_id"),
+             suffix = c("_train", "_test"),
+             na_matches = "never")
+
+col_names_rename = grep("^d_", colnames(combined), value = TRUE)
+
+start_date = as.Date("2011-01-29")
+date_sequence = seq(start_date, 
+                    by = "1 day", 
+                    length.out = length(col_names_rename))
+
+combined = combined %>%
+  rename_at(vars(col_names_rename), ~ as.character(date_sequence))
+
+combined2 = combined %>%
+  group_by(state_id) %>%
+  summarise(across(starts_with("201"), sum, na.rm = TRUE))
+
+combined3 = combined2 %>%
+  pivot_longer(cols = -state_id, names_to = "date", values_to = "value") %>%
+  pivot_wider(names_from = state_id, values_from = value)
+
+calendar2 = calendar[-c(1942:1969), ]
+
+calendar2$date = as.Date(as.character(calendar2$date)) 
+combined3$date = as.Date(combined3$date)            
+
+combined4 = combined3 %>%
+  right_join(calendar2, 
+             by = "date",
+             na_matches = "never")
+
+sell_prices2 = sell_prices %>%
+  group_by(store_id, wm_yr_wk) %>%
+  summarise(avg = mean(sell_price))
+
+sell_prices3 = sell_prices2 %>%
+  pivot_wider(names_from = store_id, values_from = avg)
+
+sell_prices4 = sell_prices6 = sell_prices3 %>%
+  mutate(CA = ((CA_1 + CA_2 + CA_3 + CA_4) / 4),
+         TX = ((TX_1 + TX_2 + TX_3) / 3),
+         WI = ((WI_1 + WI_2 + WI_3) / 3)) %>%
+  select(wm_yr_wk, CA, TX, WI)
+
+sell_prices4_1 = sell_prices4[rep(seq_len(nrow(sell_prices4)), each = 7), ]
+
+sell_prices4_1 = sell_prices4_1[-c(1942:1974), ]
+
+sell_prices4_2 = sell_prices4_1 %>%
+  select(wm_yr_wk, CA_Price = CA, 
+         TX_Price = TX,  WI_Price = WI)
+
+combined5 <- combined4 %>% 
+  left_join(sell_prices4_2, by = "wm_yr_wk") %>%
+  distinct(date, .keep_all = TRUE)
+
+```
+
+```{r, echo=FALSE}
+
+plot_ly(data = combined5, x = ~date) %>%
+  add_trace(y = ~CA, type = "scatter", mode = "lines", name = "CA Daily Units") %>%
+  add_trace(y = ~TX, type = "scatter", mode = "lines", name = "TX Daily Units") %>%
+  add_trace(y = ~WI, type = "scatter", mode = "lines", name = "WI Daily Units") %>%
+  layout(
+    title = "Time Series of Daily Units Sold in California, Texas, and Wisconsin",
+    xaxis = list(title = "Date", tickformat = "%Y-%m-%d"),
+    yaxis = list(title = "Daily Units", tickformat = ","),
+    showlegend = TRUE
+  )
+
+```
+### Daily Units Sales Time-Series Analysis:
+Random peak in sales of daily average units in Texas on 6/15/2015, could potentially be due to the fact that there was a Tropical Storm that was forecasted to hit Texas from the South. Potentially, people decided to stock up on essentials before the storm hit. 6/16/2015 was the day of the storm and so the graph sees a dip in units. There are yearly dips in daily units sold on or before Christmas possibly because people are spending time with family and certain store locations have limited hours reducing opportunity for sales. In terms of hierarchy, California is the clear frontrunner in the amount of units sold daily, which we think is due to the high population and the difference in store locations among states.
+Because the population is larger in California it is not inconceivable that the daily units sold would be higher even with fewer store locations but it was surprising to find that there was a striking similarity in the trend of Wisconsin and Texas, as Texas has 509 Walmart locations and therefore there would be more scope for sales. 
+
+
+```{r, echo=FALSE}
+
+plot_ly(data = combined5, x = ~date) %>%
+  add_trace(y = ~CA_Price, type = "scatter", mode = "lines", name = "CA Average Price") %>%
+  add_trace(y = ~TX_Price, type = "scatter", mode = "lines", name = "TX Average Price") %>%
+  add_trace(y = ~WI_Price, type = "scatter", mode = "lines", name = "WI Average Price") %>%
+  layout(
+    title = "Time Series of Average Prices in California, Texas, and Wisconsin",
+    xaxis = list(title = "Date", tickformat = "%Y-%m-%d"),
+    yaxis = list(title = "Average Price", tickformat = ","),
+    showlegend = TRUE
+  )
+
+```
+
+### Daily Price Time-Series Analysis:
+On initial intuition, we thought California would have had the highest average prices for goods as California has the highest cost of living for the three states but we found that Wisconsin is consistently higher. From 2011 to 2013, there was a decent amount of difference in average prices for all three states, but from 2013 onwards, the prices have converged to similar levels. We think it could be due to logistical reasons such as an increase in distribution centers, but we have no conclusive evidence for the reason for the convergence. The average prices for the three states follow similar trends of rising and falling together, around the same periods, which can be indicative of a nationalistic trend. 
+
+
+```{r, echo=FALSE}
+
+plot_ly(data = combined5, x = ~month) %>%
+  add_trace(y = ~CA, type = "box", name = "CA Monthly Units") %>%
+  add_trace(y = ~TX, type = "box", name = "TX Monthly Units") %>%
+  add_trace(y = ~WI, type = "box", name = "WI Monthly Units") %>%
+  layout(
+    title = "Box Plot of Monthly Units Sold in California, Texas, and Wisconsin",
+    xaxis = list(title = "Month"),
+    yaxis = list(title = "Monthly Units"),
+    showlegend = TRUE
+  )
+
+```
+
+### Monthly Unit Sales Boxplot Analysis:
+Outliers on each month represent a significant event or a holiday such as the one we see in December at nearly 0 Monthly Units sold for each of California, Texas, and Wisconsin. We see an increase in the median from January to August. We assume this is because some workers get the summer off and tourism is increased during the summer months. Back-to-school sales at Walmart may also be a reason we see this increase in those months but drop off in the subsequent months.
+
+```{r, echo=FALSE}
+
+weekday_order = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+
+combined5$weekday = factor(combined5$weekday, levels = weekday_order)
+
+plot_ly(data = combined5, x = ~weekday) %>%
+  add_trace(y = ~CA, type = "box", name = "CA Daily Units") %>%
+  add_trace(y = ~TX, type = "box", name = "TX Daily Units") %>%
+  add_trace(y = ~WI, type = "box", name = "WI Daily Units") %>%
+  layout(
+    title = "Box Plot of Daily Units Sold in California, Texas, and Wisconsin",
+    xaxis = list(title = "Day of the Week"),
+    yaxis = list(title = "Daily Units"),
+    showlegend = TRUE
+  )
+
+```
+
+### Weekday Unit Sales Boxplot Analysis:
+The days of the week with the most sales are Saturday and Sunday as expected as most grocery shopping trips occur on the weekend. The parabolic shape shows that people prepare for the week by shopping on the weekend and sales decrease in the middle of the week for that reason. The variance for the daily units sold for Texas was the smallest followed by California and Wisconsin with the largest variance amongst the three states. This is probably because there are far fewer Walmart locations in Wisconsin than in California and Texas so the scope for variance in daily units is larger and the distance between stores could mean that fewer people have access to Walmart as compared to other states. As Texas has the highest amount of stores of the three stores, stores are closer to people, so people are more likely to go to them.
+
+```{r, echo= FALSE}
+
+combined5Models = combined5
+
+combined5_train = combined5[1:(1941 - 28), ]
+
+combined5_test = combined5[(1941 - 28 + 1):1941, ]
+
+combined5Models$combined_month = as.factor(combined5Models$month)
+combined5Models$combined_day = as.factor(combined5Models$weekday)
+combined5Models$combined_event1 = as.factor(combined5Models$event_name_1)
+combined5Models$combined_event2 = as.factor(combined5Models$event_name_2)
+combined5Models$snap_CA = as.factor(combined5Models$snap_CA)
+combined5Models$snap_TX = as.factor(combined5Models$snap_TX)
+combined5Models$snap_WI = as.factor(combined5Models$snap_WI)
+
+combined5Models$combined_event1 = relevel(combined5Models$combined_event1, ref = "NA")
+
+combined5Models$combined_event2 = relevel(combined5Models$combined_event2, ref = "NA")
+
+combined5Models$combined_day = relevel(combined5Models$combined_day, ref = "Sunday")
+
+
+
+combined5Models_train = combined5Models[1:(1941 - 28), ]
+
+combined5Models_test = combined5Models[(1941 - 28 + 1):1941, ]
+
+
+combined5Models_test$date = as.Date(combined5Models_test$date)
+
+
+```
+
+# The simple Model
+We created a function to calculate the root squared mean error (RMSE) of an OLS model compared to the actual dataset. We then created an OLS model using the lm() function. The model predicts the values of the specified state's unit sales, which is our dependent variable, using certain predictors (combined_month, combined_day, combined_event, snap, and price)  from the training dataset. We then created plots and calculated the RMSE for each of the states. The graphs all generally follow the same trends as the actual values, however, all models tend to underestimate the values. Wisconsin and California however underestimate at a higher magnitude compared to the Texas Model which is closer, but still underestimates. The Texas model follows the actual predicted values accurately. The RMSE for the 3 states are California: 2522.48008765255, Texas: 1218.71943323679, and Wisconsin: 3220.363976644. The month and day variables were all statistically significant, as were the Snap and price variables. Certain events were also significant. Below is the summary of all coefficients, as well as the plots for the graphs. 
+
+```{r, echo= FALSE, include = FALSE}
+
+calculate_rmse = function(model, data, response_var) {
+  
+  predicted_values = predict(model, newdata = data)
+  
+  actual_values = data[[response_var]]
+  
+  residuals = actual_values - predicted_values
+  
+  rmse = sqrt(mean(residuals^2))
+  
+  return(rmse)
+}
+
+CA_Test_model <- lm(CA ~ combined_month + combined_day + combined_event1 +
+                      combined_event2 + snap_CA + CA_Price - 1, 
+                    data = combined5Models_train)
+
+TX_Test_model <- lm(TX ~ combined_month + combined_day + combined_event1 + 
+                      combined_event2 + snap_TX + TX_Price - 1, 
+                    data = combined5Models_train)
+
+WI_Test_model <- lm(WI ~ combined_month + combined_day + combined_event1 + 
+                      combined_event2 + snap_WI + WI_Price - 1, 
+                    data = combined5Models_train)
+
+```
+
+## California Simple OLS Model Summary Table
+```{r, echo = FALSE}
+
+summary(CA_Test_model)
+
+```
+
+### California Simple OLS Coefficients Analysis:
+Many variables, including combined_month, combined_day, combined_event1, snap_CA, and CA_Price, have significant effects on the sales in CA. For instance, the coefficients for months indicate seasonal effects (e.g., June has a significantly higher coefficient), and different weekdays show different sales trends; for example, combined_dayTuesday has a large negative coefficient).
+The combined_event1Christmas has a large negative coefficient (-13679.75), indicating a significant drop in sales during this period, likely due to store closures or holiday impacts.
+
+## California Actual Vs. Fitted Graph
+```{r, echo=FALSE}
+
+combined5Models_test$predicted_valuesCA <- predict(CA_Test_model
+                                             , newdata = combined5Models_test)
+plot_ly(combined5Models_test, x = ~date) %>%
+  add_lines(y = ~CA, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesCA, name = "Predicted", 
+            line = list(color = "red")) %>%
+  layout(title = "Actual vs Predicted CA Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "CA Units"),
+         showlegend = TRUE)
+
+```
+
+### California Actual vs. Fitted Graph Analysis:
+Plotting our predicted versus actual data values across a 28-day forecasting period in California, our simple OLS model portrayed a close resemblance to the actual data trend. However, it consistently displayed a tendency to underestimate the actual values. This discrepancy may be due to the omission of certain relevant explanatory variables in our model, or a need to fine-tune the intercept term to better align with the observed data. Further exploration into these factors could have potentially enhanced the predictive accuracy of our model.
+
+
+## TX Simple OLS Model Summary Table
+```{r, echo = FALSE}
+
+summary(TX_Test_model)
+
+```
+
+### Texas Simple OLS Coefficients Analysis:
+The coefficients for months indicate strong seasonal effects, with all months showing significantly negative coefficients, suggesting a generalized decrease from a base level, potentially overstating seasonal lows. Different weekdays also show distinct sales trends; notably, combined_dayTuesday has a substantial negative coefficient (-3366.79), indicating lower sales on these days compared to the base day (likely Sunday). 
+The combined_event1Christmas variable shows a large negative coefficient (-9036.20), suggesting a significant drop in sales during this period, likely due to holiday-related store closures or shifts in consumer behavior.
+
+
+## Texas Actual vs. Fitted Graph
+```{r, echo=FALSE}
+
+combined5Models_test$predicted_valuesTX <- predict(TX_Test_model
+                                             , newdata = combined5Models_test)
+plot_ly(combined5Models_test, x = ~date) %>%
+  add_lines(y = ~TX, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesTX, name = "Predicted", 
+            line = list(color = "red")) %>%
+  layout(title = "Actual vs Predicted TX Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "TX Units"),
+         showlegend = TRUE)
+
+```
+
+### Texas Actual vs. Fitted Graph Analysis:
+Our actual versus predicted model for Texas’ 28-day forecasting period showed an even closer similarity than California, with the biggest discrepancies being an underestimate on May 10th and 15th. Again, the trend with the predicted OLS model was underestimating the actual trend. Texas having comparatively the more accurate predictor could be due to the fact that it has the most stores as a state, making them more accessible. 
+
+## Wisconsin Simple OLS Model Summary Table
+```{r, echo = FALSE}
+
+summary(WI_Test_model)
+
+```
+### Wisconsin Simple OLS Coefficients Analysis:
+Weekly sales trends are also evident, with days like Tuesday and Wednesday having notable negative coefficients (-2379.22 and -2335.49 respectively), suggesting lower sales on these weekdays compared to the base day (possibly Sunday). The combined_event1Christmas variable shows a significant negative impact (-8879.30), indicating a considerable drop in sales during this period as the store closes on that day. Additionally, special events such as combined_event1LaborDay and combined_event1Mother's day demonstrate positive and negative impacts respectively, aligning with expected shifts in consumer purchasing patterns during these times. 
+
+## Wisconsin Actual vs. Fitted Graph
+
+```{r, echo=FALSE}
+
+combined5Models_test$predicted_valuesWI <- predict(WI_Test_model
+                                             , newdata = combined5Models_test)
+plot_ly(combined5Models_test, x = ~date) %>%
+  add_lines(y = ~WI, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesWI, name = "Predicted", 
+            line = list(color = "red")) %>%
+  layout(title = "Actual vs Predicted WI Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "WI Units"),
+         showlegend = TRUE)
+
+```
+### Wisconsin Actual vs. Fitted Graph Analysis:
+Wisconsin showed the largest discrepancy between predicted and actual trends. The predicted model consistently underestimated the actual trend. This may be due to omitted explanatory variables. The largest discrepancy occurs on May 15th. As there are 99 total Walmart locations in Wisconsin, our line of thinking is that individuals purchase more products during their Walmart trips as locations are sparse and spread apart. 
+
+### California, Wisconsin, and Texas OLS RMSE:
+```{r, echo=FALSE}
+
+CA_rmse <- calculate_rmse(CA_Test_model, combined5Models_test, "CA")
+
+print(paste("CAlifornia OLS RMSE:", CA_rmse))
+
+TX_rmse <- calculate_rmse(TX_Test_model, combined5Models_test, "TX")
+
+print(paste("Texas OLS RMSE:", TX_rmse))
+
+WI_rmse <- calculate_rmse(WI_Test_model, combined5Models_test, "WI")
+
+print(paste("Wisconsin OLS RMSE:", WI_rmse))
+
+```
+
+
+# Other Models
+
+## Lasso Method:
+Our goal is to predict the number of units sold in each of our three states, based on various factors such as the presence of SNAP, holidays, weekday, month, and the price. Lasso regression helps us with this task by analyzing all these factors together and identifying which ones have the most significant impact on the number of units sold. It achieves this by penalizing less important factors, essentially shrinking their influence towards zero. This process simplifies the model while retaining the essential factors crucial for accurate predictions. The workflow involves determining the optimal penalty level through cross-validation of 10 folds and then building a final model to make predictions on new data. Lasso regression is sifting through the dataset to pinpoint the key drivers influencing Walmart store sales in the states, thereby aiding in better decision-making and resource allocation. We took our final model that was obtained through this lasso method, and calculated its RMSE to compare to the OLS and the other models we used.
+
+## AR, MA, and ARMA Models:
+Autoregressive (AR), Moving Average (MA), and Autoregressive Moving Average (ARMA) models are commonly used to forecast future values based on past data.The AR model looks at the relationship between the current value and previous values in the time series data. It consider how the number of units sold today is related to the number sold in the past. The MA model, on the other hand, focuses on the relationship between the current value and the residual errors from past predictions. This could involve assessing whether any unusual spikes or drops in sales can be attributed to specific factors, such as a temporary promotion or a holiday. Combining the strengths of both AR and MA models, the ARMA model provides a comprehensive approach by considering both the autoregressive and moving average components.In order to select the best AR, MA, and ARMA models, we decided to just brute force it, and select the best model based on the RMSE. We know that there is things such as the ACF and the PACF graphs that one can use to be able to have an idea on what is the best model, but again we decided to just brute force it. For both AR and MA, we did the first 50 lags, as the computation time for each model was getting significantly longer and more complicated the more lags you include. We felt that 50 was an adequate number as it covers at least one month back, but also includes most of the second month before the prediction to include any trends better. For ARMA, we did the combinations of ARMA(1:30,1:4) and ARMA(1:4,1:30), so out of these 240 models, we chose the best one based on the RMSE. 
+
+## California Models
+```{r, echo=FALSE, include=FALSE}
+
+CA_combined5_train = combined5_train[ , -c(3,4)]
+CA_combined5_train = CA_combined5_train[, -c(16:17)]
+CA_combined5_train = CA_combined5_train[ , -c(13,14)]
+CA_combined5_test = combined5_test[ , -c(3,4)]
+CA_combined5_test = CA_combined5_test[ ,-c(16:17)]
+CA_combined5_test = CA_combined5_test[ , -c(13,14)]
+
+CA_combined5_train$snap_CA = as.numeric(CA_combined5_train$snap_CA)
+
+CA_combined5_test$snap_CA = as.numeric(CA_combined5_test$snap_CA)
+
+x_trainCA = data.matrix(CA_combined5_train[, -2])
+
+y_trainCA = CA_combined5_train$CA
+
+lasso_model = cv.glmnet(x_trainCA, y_trainCA, alpha = 1) 
+
+best_lambda = lasso_model$lambda.min
+
+final_lasso_model = glmnet(x_trainCA, y_trainCA, 
+                            alpha = 1, lambda = best_lambda)
+
+x_testCA = data.matrix(CA_combined5_test[, -2])
+
+lasso_predictions = predict(final_lasso_model, newx = x_testCA)
+
+lasso_rmse = sqrt(mean((lasso_predictions - CA_combined5_test$CA)^2))
+
+combined5_test$date = as.Date(combined5_test$date)
+
+combined5_test$predicted_valuesCA = predict(CA_Test_model
+                                             , newdata = combined5Models_test)
+
+CA_AR = arima(combined5_train$CA, c(49,0,0))
+combined5_test$predicted_valuesCA_AR = predict(CA_AR, n.ahead= 28)$pred
+
+CA_MA = arima(combined5_train$CA, c(0,0,43))
+combined5_test$predicted_valuesCA_MA = predict(CA_MA, n.ahead = 28)$pred
+
+CA_ARMA = arima(combined5_train$CA, c(30,0,3))
+combined5_test$predicted_valuesCA_ARMA = predict(CA_ARMA, n.ahead = 28)$pred
+
+combined5_test$predictedValuesCA_Lasso = lasso_predictions
+
+```
+
+```{r, echo=FALSE}
+
+plot_ly(combined5_test, x = ~date) %>%
+  add_lines(y = ~CA, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesCA, name = "OLS", 
+            line = list(color = "red")) %>%
+  add_lines(y = ~predicted_valuesCA_AR, name = "AR", 
+            line = list(color = "orange")) %>%
+  add_lines(y = ~predicted_valuesCA_MA, name = "MA", 
+            line = list(color = "green")) %>%
+  add_lines(y = ~predicted_valuesCA_ARMA, name = "ARMA", 
+            line = list(color = "yellow")) %>%
+  add_lines(y = ~predictedValuesCA_Lasso, name = "Lasso", 
+            line = list(color = "pink")) %>%
+  layout(title = "Actual vs Predicted CA Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "CA Units"),
+         showlegend = TRUE)
+
+```
+### California Models Analysis:
+Analyzing the performance of our five prediction models OLS, AR, MA, ARMA, and Lasso by plotting them against the actual values reveals notable insights. Specifically focusing on California, we observe that both AR and ARMA exhibit a consistent and close adherence to the observed trend, effectively predicting peaks in the data. However, AR occasionally lags behind, displaying a tendency to systematically overestimate or underestimate these peaks. Moving on, MA emerges as the next best-performing model in terms of prediction accuracy, followed by Lasso, and lastly, the straightforward OLS approach.
+
+## California RMSE of Models Bar Chart
+```{r, echo=FALSE}
+
+calculate_rmseCA = function(model, data, response_var) {
+  
+  actual_values = combined5_test$CA
+  
+  residuals <- actual_values - model
+  
+  rmse <- sqrt(mean(residuals^2))
+  
+  return(rmse)
+}
+
+CA_AR_RMSE = calculate_rmseCA(predict(CA_AR, n.ahead= 28)$pred, 
+                              combined5_test, "CA")
+
+
+CA_MA_RMSE = calculate_rmseCA(predict(CA_MA, n.ahead= 28)$pred, 
+                              combined5_test, "CA")
+
+
+CA_ARMA_RMSE = calculate_rmseCA(predict(CA_ARMA, n.ahead= 28)$pred, 
+                              combined5_test, "CA")
+
+rmse_values <- c(CA_rmse, CA_AR_RMSE, CA_MA_RMSE, CA_ARMA_RMSE, lasso_rmse)
+models <- c("CA OLS", "CA AR", "CA MA", "CA ARMA", "CA Lasso")
+
+df <- data.frame(models, rmse_values)
+
+plot_ly(df, x = ~models, y = ~rmse_values, type = 'bar', 
+        marker = list(color = 'rgb(158,202,225)', 
+                      line = list(color = 'rgb(8,48,107)', width = 1.5))) %>%
+  layout(title = "RMSE Comparison of Different CA Models",
+         xaxis = list(title = "Models"),
+         yaxis = list(title = "RMSE"))
+
+```
+### California RMSE Bar Chart Analysis:
+In our analysis for California, the ARMA model achieved the lowest RMSE of 1193.415, representing a significant reduction compared to our baseline OLS model. The ARMA model reduced the RMSE by approximately 52.7% compared to the OLS baseline. Following closely was the AR model which yielded an RMSE of 1205.961 also indicating a substantial improvement, reducing RMSE by 52.2% compared to the OLS model. Conversely, the MA model exhibited a higher RMSE of 2422.327, indicating a relatively poorer predictive performance compared to AR and ARMA. It still, however, reduced the RMSE by about 4%. The Lasso had an RMSE of 2062.748, translating to a reduction of approximately 18.2% compared to OLS. Lastly, the OLS model, serving as our baseline, exhibited the highest RMSE of 2522.48. 
+
+## Texas Models
+
+```{r, echo=FALSE}
+
+TX_combined5_train = combined5_train[ , -c(2,4)]
+TX_combined5_train = TX_combined5_train[, -c(15,17)]
+TX_combined5_train = TX_combined5_train[ , -c(12,14)]
+TX_combined5_test = combined5_test[ , -c(2,4)]
+TX_combined5_test = TX_combined5_test[ ,-c(17:22)]
+TX_combined5_test = TX_combined5_test[ , -c(12,14,15)]
+
+x_trainTX = data.matrix(TX_combined5_train[, -2])
+
+y_trainTX = TX_combined5_train$TX
+
+lasso_model2 = cv.glmnet(x_trainTX, y_trainTX, alpha = 1) 
+
+best_lambda2 = lasso_model2$lambda.min
+
+final_lasso_model2 = glmnet(x_trainTX, y_trainTX, 
+                             alpha = 1, lambda = best_lambda2)
+
+x_testTX = data.matrix(TX_combined5_test[, -2])
+
+lasso_predictions2 = predict(final_lasso_model2, newx = x_testTX)
+
+lasso_rmse2 = sqrt(mean((lasso_predictions2 - TX_combined5_test$TX)^2))
+
+combined5_test$date = as.Date(combined5_test$date)
+
+combined5_test$predicted_valuesTX = predict(TX_Test_model
+                                             , newdata = combined5Models_test)
+
+TX_AR = arima(combined5_train$TX, c(31,0,0))
+combined5_test$predicted_valuesTX_AR = predict(TX_AR, n.ahead= 28)$pred
+
+TX_MA = arima(combined5_train$TX, c(0,0,43))
+combined5_test$predicted_valuesTX_MA = predict(TX_MA, n.ahead = 28)$pred
+
+TX_ARMA = arima(combined5_train$TX, c(3,0,7))
+combined5_test$predicted_valuesTX_ARMA = predict(TX_ARMA, n.ahead = 28)$pred
+
+combined5_test$predictedValuesTX_Lasso = lasso_predictions2
+
+plot_ly(combined5_test, x = ~date) %>%
+  add_lines(y = ~TX, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesTX, name = "OLS", 
+            line = list(color = "red")) %>%
+  add_lines(y = ~predicted_valuesTX_AR, name = "AR", 
+            line = list(color = "orange")) %>%
+  add_lines(y = ~predicted_valuesTX_MA, name = "MA", 
+            line = list(color = "green")) %>%
+  add_lines(y = ~predicted_valuesTX_ARMA, name = "ARMA", 
+            line = list(color = "yellow")) %>%
+  add_lines(y = ~predictedValuesTX_Lasso, name = "Lasso", 
+            line = list(color = "pink")) %>%
+  layout(title = "Actual vs Predicted TX Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "TX Units"),
+         showlegend = TRUE)
+
+
+```
+### Texas Models Analysis:
+The analysis of Texas illustrated a slightly different outcome. Specifically, in Texas, our naive OLS approach surprisingly outperformed the other models in capturing trends and peaks when predicting the units. This was closely trailed by the AR, ARMA, and Lasso models, respectively, with the MA model exhibiting the most significant deviation in accuracy compared to the other models. 
+
+## Texas RMSE of Models Bar Chart
+```{r, echo=FALSE}
+
+calculate_rmseTX = function(model, data, response_var) {
+  
+  actual_values = combined5_test$TX
+  
+  residuals <- actual_values - model
+  
+  rmse <- sqrt(mean(residuals^2))
+  
+  return(rmse)
+}
+
+TX_AR_RMSE = calculate_rmseTX(predict(TX_AR, n.ahead= 28)$pred, 
+                              combined5_test, "TX")
+
+TX_MA_RMSE = calculate_rmseTX(predict(TX_MA, n.ahead= 28)$pred, 
+                              combined5_test, "TX")
+
+TX_ARMA_RMSE = calculate_rmseTX(predict(TX_ARMA, n.ahead= 28)$pred, 
+                              combined5_test, "TX")
+
+rmse_values <- c(TX_rmse, TX_AR_RMSE, TX_MA_RMSE, TX_ARMA_RMSE, lasso_rmse2)
+models <- c("TX OLS", "TX AR", "TX MA", "TX ARMA", "TX Lasso")
+
+df <- data.frame(models, rmse_values)
+
+plot_ly(df, x = ~models, y = ~rmse_values, type = 'bar', 
+        marker = list(color = 'rgb(158,202,225)', 
+                      line = list(color = 'rgb(8,48,107)', width = 1.5))) %>%
+  layout(title = "RMSE Comparison of Different TX Models",
+         xaxis = list(title = "Models"),
+         yaxis = list(title = "RMSE"))
+
+```
+
+### Texas RMSE Bar Chart Analysis:
+In the case of Texas, our baseline OLS model boasted the lowest RMSE of 1218.719. Contrary to expectation, both the AR and ARMA models did not achieve a reduction in RMSE compared to the OLS baseline; instead, they yielded similar levels of performance, with RMSEs of 1223.122 and 1248.528, respectively. The Lasso model displayed a slightly less accurate performance, resulting in an RMSE of 1411.404, which represented an increase of approximately 13.04% compared to our OLS baseline. Notably, the MA model exhibited the poorest performance, demonstrating a substantially higher RMSE of 1984.349, translating to an increase of approximately 62.84% compared to the OLS baseline in Texas.
+
+## Wisconsin Models
+
+```{r, echo=FALSE}
+
+WI_combined5_train = combined5_train[ , -c(2,3)]
+WI_combined5_train = WI_combined5_train[, -c(15,16)]
+WI_combined5_train = WI_combined5_train[ , -c(12,13)]
+WI_combined5_test = combined5_test[ , -c(2,3)]
+WI_combined5_test = WI_combined5_test[ ,-c(18:27)]
+WI_combined5_test = WI_combined5_test[ , -c(15,16)]
+WI_combined5_test = WI_combined5_test[ , -c(12,13)]
+
+x_trainWI = data.matrix(WI_combined5_train[, -2])
+
+y_trainWI = WI_combined5_train$WI
+
+lasso_model3 = cv.glmnet(x_trainWI, y_trainWI, alpha = 1) 
+
+best_lambda3 = lasso_model3$lambda.min
+
+final_lasso_model3 = glmnet(x_trainWI, y_trainWI, 
+                             alpha = 1, lambda = best_lambda3)
+
+x_testWI = data.matrix(WI_combined5_test[, -2])
+
+lasso_predictions3 = predict(final_lasso_model3, newx = x_testWI)
+
+lasso_rmse3 = sqrt(mean((lasso_predictions3 - WI_combined5_test$WI)^2))
+
+combined5_test$date = as.Date(combined5_test$date)
+
+
+combined5_test$predicted_valuesWI = predict(WI_Test_model
+                                             , newdata = combined5Models_test)
+
+
+WI_AR = arima(combined5_train$WI, c(30,0,0))
+combined5_test$predicted_valuesWI_AR = predict(WI_AR, n.ahead= 28)$pred
+
+WI_MA = arima(combined5_train$WI, c(0,0,50))
+combined5_test$predicted_valuesWI_MA = predict(WI_MA, n.ahead = 28)$pred
+
+WI_ARMA = arima(combined5_train$WI, c(27,0,2))
+combined5_test$predicted_valuesWI_ARMA = predict(WI_ARMA, n.ahead = 28)$pred
+
+combined5_test$predictedValuesWI_Lasso = lasso_predictions3
+
+plot_ly(combined5_test, x = ~date) %>%
+  add_lines(y = ~WI, name = "Actual", line = list(color = "blue")) %>%
+  add_lines(y = ~predicted_valuesWI, name = "OLS", 
+            line = list(color = "red")) %>%
+  add_lines(y = ~predicted_valuesWI_AR, name = "AR", 
+            line = list(color = "orange")) %>%
+  add_lines(y = ~predicted_valuesWI_MA, name = "MA", 
+            line = list(color = "green")) %>%
+  add_lines(y = ~predicted_valuesWI_ARMA, name = "ARMA", 
+            line = list(color = "yellow")) %>%
+  add_lines(y = ~predictedValuesWI_Lasso, name = "Lasso", 
+            line = list(color = "pink")) %>%
+  layout(title = "Actual vs Predicted WI Units",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "WI Units"),
+         showlegend = TRUE)
+
+```
+### Wisconsin Models Analysis:
+Examining the graph for Wisconsin revealed a pattern similar to that observed in California. Notably, both ARMA and AR models performed significantly better than the others, with AR lagging slightly behind. Following this trend, Lasso was the next best-performing model, succeeded by MA, and finally, the OLS model lagged behind the rest in terms of predictive accuracy.
+
+## Wisconsin RMSE of Models Bar Chart
+```{r, echo=FALSE}
+
+calculate_rmseWI = function(model, data, response_var) {
+  
+  actual_values = combined5_test$WI
+  
+  residuals <- actual_values - model
+  
+  rmse <- sqrt(mean(residuals^2))
+  
+  return(rmse)
+}
+
+WI_AR_RMSE = calculate_rmseWI(predict(WI_AR, n.ahead= 28)$pred, 
+                              combined5_test, "WI")
+
+WI_MA_RMSE = calculate_rmseWI(predict(WI_MA, n.ahead= 28)$pred, 
+                              combined5_test, "WI")
+
+WI_ARMA_RMSE = calculate_rmseWI(predict(WI_ARMA, n.ahead= 28)$pred, 
+                              combined5_test, "WI")
+
+rmse_values <- c(WI_rmse, WI_AR_RMSE, WI_MA_RMSE, WI_ARMA_RMSE, lasso_rmse3)
+models <- c("WI OLS", "WI AR", "WI MA", "WI ARMA", "WI Lasso")
+
+df <- data.frame(models, rmse_values)
+
+plot_ly(df, x = ~models, y = ~rmse_values, type = 'bar', 
+        marker = list(color = 'rgb(158,202,225)', 
+                      line = list(color = 'rgb(8,48,107)', width = 1.5))) %>%
+  layout(title = "RMSE Comparison of Different WI Models",
+         xaxis = list(title = "Models"),
+         yaxis = list(title = "RMSE"))
+
+
+```
+
+### Wisconsin RMSE Bar Chart Analysis:
+For our analysis for Wisconsin, the ARMA model achieved the lowest RMSE of 1290.461, showing a sizable reduction compared to our OLS model’s RMSE value of 3220.364; this translates to a 59.9% decrease in RMSE. The AR model was a close second to ARMA with an RMSE value of 1335.579, indicating a reduction from the OLS baseline of approximately 58.5%. The subsequent models, namely the Lasso Regression, and MA models also led to reductions in RMSE compared to the OLS baseline. The Lasso model resulted in an RMSE of 1992.768, while the MA model yielded an RMSE of 2421.862. Although these values were significantly higher compared to the ARMA and AR models, they still represented notable improvements over the OLS baseline. 
+
+# Final Models
+For California and Wisconsin which had significant RMSE from the OLS, with both being more than 2500+, we decided to go for the ARMA model as it had the lowest RMSE of the four models we did. Both states ARMA model improved significantly and so we are thus confident in using it as our Final Model. Something interesting to note is that they are not the same ARMA model. California is an ARMA(30,3) model whereas Wisconsin is an ARMA(27,2) model. This is consistent also with the fact that AR models for both states were very close to ARMA models in terms of their RMSE. Texas however is another case as the RMSE was very low to begin with, at only 1218.71943323685 for the OLS. This is significantly lower when compared to California and Wisconsin. None of our models did better than the OLS in terms of RMSE. We however still chose to go with the ARMA(3,7) model even though its RMSE was higher than the AR(31) model for Texas, keeping with the theme of using the ARMA model for our prediction. 
+
+## California ARMA(30,3) Model:
+```{r, echo=FALSE}
+
+print(CA_ARMA$coef)
+
+```
+
+## Texas ARMA(3,7) Model:
+```{r, echo=FALSE}
+
+print(TX_ARMA$coef)
+
+```
+
+## Wisconsin ARMA(27,2) Model:
+```{r, echo=FALSE}
+
+print(WI_ARMA$coef)
+
+```
+
+## Conclusion
+By using ARMA models, we are going to be able to predict future sales the best compared to the other models we used in this analysis. It's important to note however that the lags are not the same for each state, but they still follow a clear trend that is present throughout our analysis. California and Wisconsin have followed similar trends across the different models we used and the ARMA lags they have are similar, ARMA(30,3) for California, and ARMA(27,2) for Wisconsin. This large number of lags is significantly more compared to Texas' ARMA(3,7) model. We saw this trend in the RMSE of the OLS, and it follows in the RMSE of these ARMA models. One explanation for this behavior could be the fact that there are significantly more stores in Texas compared to California and Wisconsin. 601 in Texas, 320 in California, and 99 in Wisconsin. (Statista, 2023) As people shop less due to lower access to Walmart stores, the shopping patterns are different in the states. California and Wisconsin customers may be shopping at a larger volume and lower frequencies, which is why the more lags, the more predictive. Since the number of stores in Texas is significantly larger, customers may be purchasing at lower volumes, and higher frequencies. This is why we are seeing fewer lags needed for the Texas model, compared to California and Wisconsin. We are also doing this analysis based on the aggregate of the entire states, but California had four stores in the dataset compared to Texas and Wisconsin which only had three stores in the dataset. We could perhaps do an average per store and then scale that number to the number of stores per state, but the best prediction would obviously be to have the data for all the stores in each state. 
+
+
+## Next Steps
+The next steps that we can do to further improve our model and to shoot for a lower RMSE, we can combine seasonality and the ARMA models we received. There was a clear case of seasonality in the weekday variable where we saw the peak on the weekend followed by a dropoff on Monday, with sales eventually trending towards an increase heading to the weekend. There was less obvious seasonality in the month variable, however, there does still seem to be an existence there that can be used to further enhance the model. We would do the combinations of ARMA plus weekday, ARMA plus weekday and month, and ARMA plus month. We would compare these three new models to our baseline of just and ARMA model, and pick based on the lowest RMSE of these four models for each state. 
+
+## Bibliography 
+
+Crown, M. (2016). Weekly sales forecasts using non-seasonal arima models. http://mxcrown.com/walmart-sales-forecasting/
+
+Jeswani, Rashmi.(2011). Predicting Walmart Sales, Exploratory Data Analysis, and Walmart Sales Dashboard: Ischool Projects.”
+www.rit.edu/ischoolprojects/node/104009. 
+
+LEVY, D., CHEN, H., MÜLLER, G., DUTTA, S. and BERGEN, M. (2010), Holiday Price Rigidity and Cost of Price Adjustment. Economica, 77: 172-198. https://doi.org/10.1111/j.1468-0335.2008.00738.x
+
+"Number of Walmart Stores in the United States as of 2023, by State." Statista, Statista Inc., 2023, https://www.statista.com/statistics/1167169/walmart-number-of-stores-by-state-us/ 
+
+
