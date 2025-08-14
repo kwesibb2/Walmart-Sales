@@ -73,3 +73,14 @@ The insights outlined enable Walmart to:
 ## Acknowledgements
 This project was completed in collaboration with [Group Members' Names Removed for Privacy].
 Original report files remain unmodified to preserve academic integrity.
+
+## Data Access
+The full dataset required to reproduce this analysis is hosted on Google Drive due to file size limitations.  
+
+**To run the project locally:**
+1. Download the dataset from [this link](https://drive.google.com/drive/folders/16Msch7RrSB0-GYbORNRRPwSwHoYKStKy).
+2. Extract the contents.
+3. Place all files into the `data/` folder in the project directory.
+4. Open `Walmart_Sales_Report.Rmd` in RStudio and render the report, or run the scripts in the order specified.
+
+> **Note:** The visualizations and model results depend on having these data files in the correct folder.
