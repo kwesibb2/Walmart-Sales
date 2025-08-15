@@ -43,7 +43,7 @@ Using Lasso regression, we identified key predictors:
 
 ### View Full HTML Report
 The complete project report, including all analysis and modeling details, can be viewed here:  
-[View Full HTML Report](https://kwesibb2.github.io/Walmart-Sales/)
+[View Full HTML Report](https://kwesibb2.github.io/Walmart-Sales/){:target="_blank"}
 
 ## Technical Skills Demonstrated
 - **Time Series Modeling**: AR, MA, ARMA
